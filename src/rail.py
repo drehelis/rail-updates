@@ -50,13 +50,14 @@ def new_update(latest_hash, all_hashes) -> bool:
         return False
 
     with open(LAST_UPDATE_HASH_FILE, "w", encoding="utf-8") as file:
-        file.write(json.dumps({"data": list(set(all_hashes + seen))}, indent=4))
+        seen_data = json.loads(seen)["data"]
+        file.write(json.dumps({"data": list(set(all_hashes + seen_data))}, indent=4))
         return True
 
 
 def telegram_msg(args):
     for arg in args:
-        subject = arg["subject"]
+        subject = arg.get("subject", "")
         content = arg["content"]
         url = arg["url"]
         timestamp = time.strftime("%d-%m-%Y", time.localtime())
@@ -66,7 +67,8 @@ def telegram_msg(args):
             text=f"""
 <strong><u>📣 [{timestamp}]: {subject}</u></strong>
 {content}
-<i><a href="{url}">🚂 להודעה המקורית באתר רכבת ישראל</a></i>
+
+<i><a href="{url}">להודעה המקורית באתר רכבת ישראל</a></i>🚂
         """,
             parse_mode=telegram.ParseMode.HTML,
             disable_web_page_preview=True,
@@ -111,14 +113,21 @@ def run(playwright: Playwright) -> None:  # pylint: disable=redefined-outer-name
             aggr_list = []
             for i in range(1):
                 msg = {}
-                msg["subject"] = updates.nth(i).locator("h2").inner_text()
 
-                updates.nth(i).locator("text=לפרטים נוספים").click()
-                page.wait_for_load_state("networkidle")
+                subject = updates.nth(i).locator("h2").inner_text()
+                more_details = updates.nth(i).locator("text=לפרטים נוספים")
+                if more_details.is_visible():
+                    more_details.click()
+                    page.wait_for_load_state("networkidle")
 
-                msg["content"] = page.locator("div.contentPlace").inner_text()
-                msg["url"] = page.url
+                    msg.update(
+                        subject=subject,
+                        content=page.locator("div.contentPlace").inner_text(),
+                    )
+                else:
+                    msg.update(content=updates.nth(i).inner_text())
 
+                msg.update(url=page.url)
                 aggr_list.append(msg)
 
                 page.go_back()
