@@ -1,0 +1,9 @@
+[FORMAT]
+max-line-length=140
+disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, logging-fstring-interpolation
+
+[SIMILARITIES]
+min-similarity-lines=4
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
