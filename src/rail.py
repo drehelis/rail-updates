@@ -1,11 +1,14 @@
+#!/usr/bin/env python3
+
 from random import choice
 import os
 import base64
 import json
 import time
 
-import telegram
 from dotenv import load_dotenv
+from google.cloud import storage, exceptions
+import telegram
 from playwright.sync_api import (
     Playwright,
     sync_playwright,
@@ -36,23 +39,27 @@ def random_ua() -> str:
     return choice(PW_DESKTOP_AGENTS)
 
 
-def new_update(latest_hash, all_hashes) -> bool:
+def gcs_check_for_update(latest_hash: str, all_hashes: list) -> bool:
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(os.getenv("BUCKET_NAME"))
+    blob = bucket.blob(LAST_UPDATE_HASH_FILE)
+
     try:
-        with open(LAST_UPDATE_HASH_FILE, encoding="utf-8") as file:
-            seen = json.load(file)["data"]
-    except FileNotFoundError:
-        seen = json.dumps({"data": []}, indent=4)
-        with open(LAST_UPDATE_HASH_FILE, "w", encoding="utf-8") as file:
-            file.write(seen)
+        contents = blob.download_as_string()
+        seen = json.loads(contents)["data"]
+    except exceptions.NotFound:
+        payload = json.dumps({"data": []}, indent=4)
+        seen = json.loads(payload)["data"]
+        blob.upload_from_string(payload)
 
     if latest_hash in seen:
         print("│       ├── No updates detected")
         return False
 
-    with open(LAST_UPDATE_HASH_FILE, "w", encoding="utf-8") as file:
-        seen_data = json.loads(seen)["data"]
-        file.write(json.dumps({"data": list(set(all_hashes + seen_data))}, indent=4))
-        return True
+    blob.upload_from_string(
+        json.dumps({"data": list(set(all_hashes + seen))}, indent=4)
+    )
+    return True
 
 
 def telegram_msg(args):
@@ -106,7 +113,9 @@ def run(playwright: Playwright) -> None:  # pylint: disable=redefined-outer-name
         for entry in updates.all_inner_texts():
             all_hashes.append(base64.b64encode(entry.encode()).decode())
 
-        is_new_update = new_update(latest_hash=latest_hash, all_hashes=all_hashes)
+        is_new_update = gcs_check_for_update(
+            latest_hash=latest_hash, all_hashes=all_hashes
+        )
 
         if is_new_update:
             print("│       └── New entry detected")
@@ -143,8 +152,8 @@ def run(playwright: Playwright) -> None:  # pylint: disable=redefined-outer-name
 if __name__ == "__main__":
     load_dotenv()
 
-    if os.getenv("TIME_INTERVAL") is None:
-        raise RuntimeError("'TIME_INTERVAL' env is not set.")
+    if os.getenv("BUCKET_NAME") is None:
+        raise RuntimeError("'BUCKET_NAME' env is not set.")
 
     if os.getenv("TELEGRAM_CHANNEL_ID") is None:
         raise RuntimeError("'TELEGRAM_CHANNEL_ID' env is not set.")
@@ -154,14 +163,6 @@ if __name__ == "__main__":
 
     bot = telegram.Bot(token=os.getenv("TELEGRAM_TOKEN"))
 
-    starttime = time.time()
-    while True:
-        print(
-            f"├── {time.strftime('%d-%m-%Y %H:%M:%S %Z', time.localtime(time.time()))}"
-        )
-        with sync_playwright() as playwright:
-            run(playwright)
-        time.sleep(
-            int(os.getenv("TIME_INTERVAL"))
-            - ((time.time() - starttime) % int(os.getenv("TIME_INTERVAL")))
-        )
+    print(f"├── {time.strftime('%d-%m-%Y %H:%M:%S %Z', time.localtime(time.time()))}")
+    with sync_playwright() as playwright:
+        run(playwright)
